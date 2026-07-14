@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from "react";
 import { supabase } from "./lib/supabase.js";
 import {
   Plus, Shirt, Sparkles, WashingMachine, BarChart3,
-  Lock, LockOpen, Trash2, Pencil, RefreshCw, Camera, X, Check, Tag, LogOut, Mail
+  Lock, LockOpen, Trash2, Pencil, RefreshCw, Camera, X, Check, Tag, LogOut, Mail, Search, CloudSun
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -13,6 +13,14 @@ const CATEGORIES = ["Top", "Bottom", "Dress", "Outerwear", "Shoes", "Accessory"]
 const CURRENCIES = ["kr", "€", "$", "£"];
 const BUCKET = "photos";
 const SIGNED_URL_TTL = 60 * 60; // 1 hour
+
+/* Canonical weather vocabulary — the generator only understands these
+   exact tags, so the item form offers them as tap-to-add chips. */
+const TEMP_TAGS = ["hot", "warm", "mild", "cold", "freezing"];
+const COND_TAGS = ["rain", "snow", "wind"];
+const WEATHER_TAGS = [...TEMP_TAGS, ...COND_TAGS];
+const tempBand = (t) =>
+  t >= 22 ? "hot" : t >= 15 ? "warm" : t >= 8 ? "mild" : t >= 0 ? "cold" : "freezing";
 
 /* ------------------------------------------------------------------ */
 /*  DB row <-> app item mapping                                        */
@@ -28,6 +36,7 @@ const dbToItem = (r) => ({
   status: r.status,
   wearCount: r.wear_count || 0,
   hasPhoto: r.has_photo,
+  createdAt: r.created_at,
 });
 
 const itemToDb = (i, userId) => ({
@@ -75,13 +84,26 @@ const compressImage = (file) =>
 /*  Outfit generation — tag-threaded                                   */
 /* ------------------------------------------------------------------ */
 
-function generateOutfit(items, lockedIds) {
-  const fresh = items.filter((i) => i.status === "fresh");
+function generateOutfit(items, lockedIds, weather) {
+  let fresh = items.filter((i) => i.status === "fresh");
+  if (weather) {
+    // An item that declares temperature bands is excluded when none match
+    // today's band. Items with no temp tags are always allowed.
+    fresh = fresh.filter((i) => {
+      const declared = i.tags.filter((t) => TEMP_TAGS.includes(t));
+      return declared.length === 0 || declared.includes(weather.band);
+    });
+  }
   if (!fresh.length) return null;
 
   const locked = fresh.filter((i) => lockedIds.includes(i.id));
   const outfit = [...locked];
   const tagPool = new Set(outfit.flatMap((i) => i.tags));
+  // Seed the tag pool with today's weather so matching items get pulled in
+  if (weather) {
+    tagPool.add(weather.band);
+    weather.conditions.forEach((c) => tagPool.add(c));
+  }
 
   const inOutfit = (id) => outfit.some((o) => o.id === id);
   const candidates = (cat) => fresh.filter((i) => i.category === cat && !inOutfit(i.id));
@@ -129,7 +151,9 @@ function generateOutfit(items, lockedIds) {
   if (useDress) pickFor("Dress", true);
   else { pickFor("Top", true); pickFor("Bottom", true); }
   pickFor("Shoes", true);
-  pickFor("Outerwear", false);
+  const outerwearRequired = !!weather &&
+    (weather.band === "cold" || weather.band === "freezing" || weather.conditions.length > 0);
+  pickFor("Outerwear", outerwearRequired);
   pickFor("Accessory", false);
 
   return outfit.length ? outfit : null;
@@ -350,6 +374,28 @@ function ItemForm({ initial, onSave, onClose, currency }) {
           <span>Tags — comma separated, these thread outfits together</span>
           <input value={tagInput} onChange={(e) => setTagInput(e.target.value)} placeholder="casual, autumn, navy" />
         </label>
+        <div className="wd-field">
+          <span>Weather tags — tap to add, the generator matches these to today's forecast</span>
+          <div className="wd-chip-row">
+            {WEATHER_TAGS.map((w) => {
+              const current = tagInput.split(",").map((t) => t.trim().toLowerCase()).filter(Boolean);
+              const on = current.includes(w);
+              return (
+                <button
+                  key={w}
+                  type="button"
+                  className={`wd-tag wd-chip ${on ? "wd-tag-hl" : ""}`}
+                  onClick={() => {
+                    const next = on ? current.filter((t) => t !== w) : [...current, w];
+                    setTagInput(next.join(", "));
+                  }}
+                >
+                  {w}
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
         <button className="wd-primary" onClick={submit} disabled={!name.trim() || saving}>
           <Check size={16} /> {saving ? "Saving…" : initial ? "Save changes" : "Add to closet"}
@@ -377,7 +423,37 @@ export default function App() {
     try { return window.localStorage.getItem("wd-currency") || "kr"; } catch { return "kr"; }
   });
   const [filterCat, setFilterCat] = useState("All");
+  const [query, setQuery] = useState("");
+  const [sortBy, setSortBy] = useState("newest");
   const [toast, setToast] = useState(null);
+  const [weather, setWeather] = useState(null);        // { tempC, band, conditions }
+  const [useWeather, setUseWeather] = useState(true);
+
+  /* ---- weather (Open-Meteo, no API key) ---- */
+  useEffect(() => {
+    const load = async (lat, lon) => {
+      try {
+        const r = await fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,rain,snowfall,wind_speed_10m`
+        );
+        const j = await r.json();
+        const c = j.current;
+        const conditions = [];
+        if ((c.rain || 0) > 0 || (c.precipitation || 0) > 0.1) conditions.push("rain");
+        if ((c.snowfall || 0) > 0) conditions.push("snow");
+        if ((c.wind_speed_10m || 0) >= 30) conditions.push("wind");
+        setWeather({ tempC: Math.round(c.temperature_2m), band: tempBand(c.temperature_2m), conditions });
+      } catch { /* generator just runs weather-blind */ }
+    };
+    const fallback = () => load(55.676, 12.568); // Copenhagen
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (p) => load(p.coords.latitude, p.coords.longitude),
+        fallback,
+        { timeout: 5000 }
+      );
+    } else fallback();
+  }, []);
 
   const userId = session?.user?.id;
 
@@ -487,7 +563,8 @@ export default function App() {
   };
 
   /* ---- outfit ---- */
-  const shuffle = () => setOutfit(generateOutfit(items, lockedIds));
+  const activeWeather = useWeather ? weather : null;
+  const shuffle = () => setOutfit(generateOutfit(items, lockedIds, activeWeather));
   const toggleLock = (id) =>
     setLockedIds((l) => (l.includes(id) ? l.filter((x) => x !== id) : [...l, id]));
 
@@ -512,7 +589,29 @@ export default function App() {
   }, [outfit]);
 
   const fmt = (n) => `${currency} ${Number(n).toLocaleString()}`;
-  const visibleItems = filterCat === "All" ? items : items.filter((i) => i.category === filterCat);
+
+  const visibleItems = useMemo(() => {
+    let list = filterCat === "All" ? [...items] : items.filter((i) => i.category === filterCat);
+    const q = query.trim().toLowerCase();
+    if (q) {
+      list = list.filter(
+        (i) =>
+          i.name.toLowerCase().includes(q) ||
+          i.brand.toLowerCase().includes(q) ||
+          i.tags.some((t) => t.includes(q))
+      );
+    }
+    const by = {
+      newest: (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0),
+      oldest: (a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0),
+      "price-desc": (a, b) => b.value - a.value,
+      "price-asc": (a, b) => a.value - b.value,
+      "most-worn": (a, b) => (b.wearCount || 0) - (a.wearCount || 0),
+      "least-worn": (a, b) => (a.wearCount || 0) - (b.wearCount || 0),
+      name: (a, b) => a.name.localeCompare(b.name),
+    };
+    return list.sort(by[sortBy] || by.newest);
+  }, [items, filterCat, query, sortBy]);
 
   const cpw = (i) => (i.wearCount > 0 ? i.value / i.wearCount : null);
   const bestValue = [...items].filter((i) => i.wearCount > 0 && i.value > 0).sort((a, b) => cpw(a) - cpw(b))[0];
@@ -605,12 +704,45 @@ export default function App() {
             </button>
           </div>
 
+          <div className="wd-searchbar">
+            <div className="wd-search">
+              <Search size={14} strokeWidth={1.8} />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search name, brand, or tag…"
+                aria-label="Search closet"
+              />
+              {query && (
+                <button className="wd-icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+            <select
+              className="wd-sort"
+              value={sortBy}
+              aria-label="Sort items"
+              onChange={(e) => setSortBy(e.target.value)}
+            >
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="price-desc">Price: high to low</option>
+              <option value="price-asc">Price: low to high</option>
+              <option value="most-worn">Most worn</option>
+              <option value="least-worn">Least worn</option>
+              <option value="name">Name A–Z</option>
+            </select>
+          </div>
+
           {visibleItems.length === 0 ? (
             <div className="wd-empty">
               <Shirt size={34} strokeWidth={1} />
               <p>{items.length === 0
                 ? "An empty closet is a blank page. Add your first piece."
-                : "Nothing in this category yet."}</p>
+                : query
+                  ? `Nothing matches “${query}”.`
+                  : "Nothing in this category yet."}</p>
             </div>
           ) : (
             <div className="wd-grid">
@@ -668,6 +800,22 @@ export default function App() {
               Pieces pair up when their tags overlap. Only fresh, laundered items make the cut.
               Lock anything you want to keep, then reshuffle around it.
             </p>
+            {weather && (
+              <div className="wd-weather">
+                <CloudSun size={15} strokeWidth={1.8} />
+                <span>
+                  {weather.tempC}° right now — dressing for
+                </span>
+                <TagChip text={weather.band} highlight={useWeather} />
+                {weather.conditions.map((c) => <TagChip key={c} text={c} highlight={useWeather} />)}
+                <button
+                  className={`wd-mini ${useWeather ? "wd-mini-on" : ""}`}
+                  onClick={() => setUseWeather((v) => !v)}
+                >
+                  {useWeather ? "Weather: on" : "Weather: off"}
+                </button>
+              </div>
+            )}
             <div className="wd-outfit-btns">
               <button className="wd-primary" onClick={shuffle} disabled={!freshItems.length}>
                 <RefreshCw size={16} /> {outfit ? "Reshuffle" : "Generate outfit"}
