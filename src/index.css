@@ -315,3 +315,13 @@ button:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
   .wd-header-stats { gap: 14px; }
   .wd-bar-row { grid-template-columns: 70px 1fr 76px; }
 }
+
+/* Password auth form */
+.wd-auth-form { display: flex; flex-direction: column; gap: 10px; max-width: 340px; }
+.wd-auth-form input {
+  font-family: 'Outfit', sans-serif; font-size: 15px;
+  padding: 10px 13px; border: 1px solid var(--stitch); border-radius: 6px;
+  background: var(--card); color: var(--ink);
+}
+.wd-auth-form input:focus { outline: 2px solid var(--cobalt); outline-offset: 1px; }
+.wd-auth .wd-text-btn { margin-top: 14px; }
