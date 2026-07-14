@@ -325,3 +325,33 @@ button:focus-visible { outline: 2px solid var(--cobalt); outline-offset: 2px; }
 }
 .wd-auth-form input:focus { outline: 2px solid var(--cobalt); outline-offset: 1px; }
 .wd-auth .wd-text-btn { margin-top: 14px; }
+
+/* Search + sort */
+.wd-searchbar { display: flex; gap: 10px; flex-wrap: wrap; margin: -8px 0 20px; }
+.wd-search {
+  display: flex; align-items: center; gap: 7px; flex: 1; min-width: 220px; max-width: 380px;
+  border: 1px solid var(--stitch); background: var(--card); border-radius: 6px;
+  padding: 0 8px 0 12px; color: var(--ink-soft);
+}
+.wd-search input {
+  flex: 1; border: none; background: transparent; padding: 9px 0;
+  font-family: 'Outfit', sans-serif; font-size: 13.5px; color: var(--ink); outline: none;
+}
+.wd-search:focus-within { border-color: var(--cobalt); }
+.wd-sort {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11.5px;
+  border: 1px solid var(--stitch); background: var(--card);
+  padding: 8px 10px; border-radius: 6px; cursor: pointer; color: var(--ink);
+}
+
+/* Weather strip */
+.wd-weather {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--ink-soft);
+  margin: 0 0 16px;
+}
+
+/* Weather chips in item form */
+.wd-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.wd-chip { cursor: pointer; background: var(--card); }
+.wd-chip:hover { border-color: var(--cobalt); }
