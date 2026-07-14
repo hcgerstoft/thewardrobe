@@ -164,52 +164,80 @@ const Swatch = ({ item, photo }) =>
 /* ------------------------------------------------------------------ */
 
 function SignIn() {
+  const [mode, setMode] = useState("signin"); // 'signin' | 'signup'
   const [email, setEmail] = useState("");
-  const [sent, setSent] = useState(false);
+  const [password, setPassword] = useState("");
+  const [notice, setNotice] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const send = async () => {
+  const canSubmit = email.includes("@") && password.length >= 6;
+
+  const submit = async () => {
+    if (!canSubmit || busy) return;
     setBusy(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: { emailRedirectTo: window.location.origin },
-    });
+    setNotice(null);
+    if (mode === "signup") {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+      });
+      if (error) setError(error.message);
+      else if (data.session === null) {
+        // Email confirmation is still enabled in Supabase settings
+        setNotice("Account created — check your inbox once to confirm your email, then sign in here.");
+        setMode("signin");
+      }
+      // If confirmation is disabled, a session is returned and the
+      // auth listener in App signs you straight in.
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+      if (error) setError(error.message);
+    }
     setBusy(false);
-    if (error) setError(error.message);
-    else setSent(true);
   };
 
   return (
     <div className="wd-auth">
       <div className="wd-eyebrow">CARE LABEL · PERSONAL EDITION</div>
       <h1>The Wardrobe</h1>
-      {sent ? (
-        <p className="wd-lede">
-          Check your inbox — a sign-in link is on its way to <b>{email}</b>.
-          Open it on this device and your closet unlocks.
-        </p>
-      ) : (
-        <>
-          <p className="wd-lede">
-            Sign in with your email. No password — a one-time link lands in your inbox.
-          </p>
-          <div className="wd-auth-row">
-            <input
-              type="email"
-              value={email}
-              placeholder="you@example.com"
-              onChange={(e) => setEmail(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && email.includes("@") && send()}
-            />
-            <button className="wd-primary" onClick={send} disabled={busy || !email.includes("@")}>
-              <Mail size={16} /> {busy ? "Sending…" : "Send link"}
-            </button>
-          </div>
-          {error && <p className="wd-error">{error}</p>}
-        </>
-      )}
+      <p className="wd-lede">
+        {mode === "signin"
+          ? "Sign in to open your closet."
+          : "Create an account — your closet syncs to every device you sign in on."}
+      </p>
+      <div className="wd-auth-form">
+        <input
+          type="email"
+          value={email}
+          placeholder="you@example.com"
+          autoComplete="email"
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <input
+          type="password"
+          value={password}
+          placeholder="Password (min. 6 characters)"
+          autoComplete={mode === "signin" ? "current-password" : "new-password"}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && submit()}
+        />
+        <button className="wd-primary" onClick={submit} disabled={busy || !canSubmit}>
+          <Mail size={16} /> {busy ? "One moment…" : mode === "signin" ? "Sign in" : "Create account"}
+        </button>
+      </div>
+      {notice && <p className="wd-lede">{notice}</p>}
+      {error && <p className="wd-error">{error}</p>}
+      <button
+        className="wd-text-btn"
+        onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(null); }}
+      >
+        {mode === "signin" ? "First time here? Create an account" : "Already have an account? Sign in"}
+      </button>
     </div>
   );
 }
